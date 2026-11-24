@@ -1,0 +1,14 @@
+// Bounded multi-strategy schedule search; no external services.
+export function optimize(tasks,{date,start='09:00',capacity=120,energy='Any',buffer=5}={}){
+ const minute=t=>/^([01]\d|2[0-3]):[0-5]\d$/.test(t||'')?Number(t.slice(0,2))*60+Number(t.slice(3)):null;
+ const begin=minute(start);if(begin===null||!Number.isFinite(+capacity))throw Error('Invalid planning window');
+ const end=Math.min(1440,begin+Math.max(0,Math.floor(+capacity)));buffer=Math.max(0,Math.floor(+buffer)||0);
+ const fmt=n=>`${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`;
+ const done=new Set(tasks.filter(t=>t.done).map(t=>t.id));const candidates=tasks.filter(t=>!t.done).map(t=>{const d=t.data;return {id:t.id,title:d.title,minutes:Math.max(5,Math.min(480,Math.round(Number(d.estimate)||25))),value:(d.priority==='High'?30:d.priority==='Medium'?20:10)+(d.date&&d.date<=date?50:0),deadline:d.date&&d.date<=date?minute(d.time)??1440:1440,reason:d.notBefore&&d.notBefore>date?'Not yet available':d.depends&&!done.has(d.depends)?'Prerequisite incomplete':energy==='Low'&&d.energy==='High'?'Energy mismatch':''}});
+ const eligible=candidates.filter(t=>!t.reason);let best=null;
+ const orders=[(a,b)=>b.value-a.value,(a,b)=>a.deadline-b.deadline||b.value-a.value,(a,b)=>b.value/b.minutes-a.value/a.minutes,(a,b)=>a.minutes-b.minutes,(a,b)=>b.value-a.value||a.deadline-b.deadline];
+ for(const order of orders){let cursor=begin,score=0;const scheduled=[];for(const t of [...eligible].sort(order)){if(cursor+t.minutes>Math.min(end,t.deadline))continue;scheduled.push({...t,start:fmt(cursor),end:fmt(cursor+t.minutes)});score+=t.value;cursor=Math.min(end,cursor+t.minutes+buffer)}const result={scheduled,score,remaining:end-cursor};if(!best||score>best.score||score===best.score&&result.remaining>best.remaining)best=result}
+ const ids=new Set(best.scheduled.map(t=>t.id));return {...best,deferred:candidates.filter(t=>!ids.has(t.id)).map(t=>({...t,reason:t.reason||'Outside selected capacity or deadline'})),alternatives:orders.length};
+}
+export function knowledgeLinks(notes,id){const source=notes.find(n=>n.id===id);if(!source)return [];const words=s=>new Set(String(s||'').toLowerCase().match(/[\p{L}\p{N}]{3,}/gu)||[]);const a=words(source.data.title+' '+source.data.domain+' '+source.data.answer);return notes.filter(n=>n.id!==id).map(n=>({id:n.id,title:n.data.title,score:[...words(n.data.title+' '+n.data.domain+' '+n.data.answer)].filter(w=>a.has(w)).length})).filter(n=>n.score>0).sort((a,b)=>b.score-a.score).slice(0,8)}
+export function focusTrend(focus,date){const days=[];for(let i=6;i>=0;i--){const d=new Date(date+'T12:00:00');d.setDate(d.getDate()-i);const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;days.push({date:key,minutes:focus.filter(f=>f.date===key).reduce((a,f)=>a+f.minutes,0)})}return days}
